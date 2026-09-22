@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <immintrin.h>
 
 // Cabeçalhos das minhas bibliotecas
 #include "matrix_lib.h"
@@ -46,7 +47,42 @@ void *matrix_worker(void *args) {
 }
 
 int scalar_matrix_mult(float scalar_value, matrix *m, matrix *r) {
-    // por enquanto apenas percorrer a matriz e multiplicar cada elemento pelo escalar
+    // sem alinhamento de memoria
+    /////////////////////////////////////////////
+    unsigned long int n = m->rows * m->cols;
+    unsigned long int i = 0;
+
+    __m256 vscalar = _mm256_set1_ps(scalar_value);
+
+     // Processa 8 floats por vez (AVX)
+    for (; i + 8 <= n; i += 8) {
+        __m256 v = _mm256_loadu_ps(&m->values[i]);
+        v = _mm256_mul_ps(v, vscalar);
+        _mm256_storeu_ps(&r->values[i], v);                 // conferir se a matriz r esta apta para receber os valores 
+    }
+     // Trata os elementos restantes (resto da divisão por 8)
+    for (; i < n; i++) {
+        r->values[i] = m->values[i] * scalar_value;
+    }
+    /////////////////////////////////////////////////
+    // com alinhamento de memoria
+    /////////////////////////////////////////////
+    unsigned long int n = m->rows * m->cols;
+    unsigned long int i = 0;
+
+    __m256 vscalar = _mm256_set1_ps(scalar_value);
+
+     // Processa 8 floats por vez (AVX)
+    for (; i + 8 <= n; i += 8) {
+        __m256 v = _mm256_load_ps(&m->values[i]);
+        v = _mm256_mul_ps(v, vscalar);
+        _mm256_store_ps(&r->values[i], v);                 // conferir se a matriz r esta apta para receber os valores 
+    }
+     // Trata os elementos restantes (resto da divisão por 8)
+    for (; i < n; i++) {
+        r->values[i] = m->values[i] * scalar_value;
+    }
+    /////////////////////////////////////////////////
     return 0;
 }
 
