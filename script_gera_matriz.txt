@@ -1,0 +1,6 @@
+python3 -c "
+import struct, random
+with open('floats1.dat', 'wb') as f:
+    for _ in range(128):
+        f.write(struct.pack('f', random.uniform(-10, 10)))
+"
