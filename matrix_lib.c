@@ -1,5 +1,4 @@
 // Cabeçalhos das bibliotecas padrão da linguagem C
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <immintrin.h>
@@ -56,6 +55,8 @@ int scalar_matrix_mult(float scalar_value, matrix *m, matrix *r)
         v = _mm256_mul_ps(v, vscalar);
         _mm256_store_ps(&r->values[i], v); // conferir se a matriz r esta apta para receber os valores
     }
+
+    return 0;
 }
 
 /**
