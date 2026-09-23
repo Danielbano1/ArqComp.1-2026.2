@@ -19,6 +19,22 @@ typedef struct
 // Variáveis globais
 #define N_THREADS 16
 
+void matrix_zero_avx(float *values, unsigned long int rows, unsigned long int cols) {
+    unsigned long int n = rows * cols;
+    unsigned long int i = 0;
+
+    __m256 zero = _mm256_setzero_ps();
+
+    for (; i + 8 <= n; i += 8) {
+        _mm256_store_ps(&values[i], zero);
+    }
+
+    // resto (se n não for múltiplo de 8)
+    for (; i < n; i++) {
+        values[i] = 0.0f;
+    }
+}
+
 void *matrix_worker(void *args)
 {
     pthread_args *thread_args = (pthread_args *)args;
@@ -26,6 +42,8 @@ void *matrix_worker(void *args)
     int qtd_colunas_m2 = thread_args->m2->cols;
     int corte_linha_m2 = qtd_colunas_m2 / 8;
     int linha_inicial;
+    unsigned long int m1_row_offset;
+    unsigned long int r_row_offset;
     int qtd_linhas;
     int thread_id;
     int sobraram; /// qtd de linhas que sobraram porque a matriz tem n_linhas multiplo de n_threads
@@ -42,21 +60,23 @@ void *matrix_worker(void *args)
     for (int i = 0; i < qtd_linhas; i++)
     {
         // Linha que a thread vai fazer
-        linha_inicial = thread_id + (i * qtd_colunas_m1);
+        linha_inicial = thread_id + (i * N_THREADS);
+        m1_row_offset = linha_inicial * qtd_colunas_m1;  // offset em M1
+        r_row_offset  = linha_inicial * qtd_colunas_m2;  // offset em R (mesmas colunas que M2)
         // itera pela quantidade de colunas de m1 (linhas de m2)
         for (int j = 0; j < qtd_colunas_m1; j++)
         {
             // Pega m1[i][j] e replica em todos os 8 lanes
-            __m256 m1_j = _mm256_set1_ps(m1_values[linha_inicial + j]);
+            __m256 m1_j = _mm256_set1_ps(m1_values[m1_row_offset + j]);
             // divide as linhas de m2 em 8 colunas para poder pegar o vetor
-            for (int k = 0; k < corte_linha_m2; k + 8)
+            for (int k = 0; k < corte_linha_m2; k++)
             {
-                __m256 m2_vec = _mm256_load_ps(&m2_values[(j * qtd_colunas_m2) + k]);
-                __m256 r_vec = _mm256_load_ps(&r_values[linha_inicial + k]);
+                __m256 m2_vec = _mm256_load_ps(&m2_values[(j * qtd_colunas_m2) + k * 8]);
+                __m256 r_vec = _mm256_load_ps(&r_values[r_row_offset + k * 8]);
 
                 r_vec = _mm256_fmadd_ps(m1_j, m2_vec, r_vec);
 
-                _mm256_store_ps(&r_values[linha_inicial + k], r_vec);
+                _mm256_store_ps(&r_values[r_row_offset + k * 8], r_vec);
             }
         }
     }
@@ -66,24 +86,28 @@ void *matrix_worker(void *args)
     {
         // linha que sobrou que eu vou fazer
         linha = qtd_linhas * N_THREADS + thread_id;
+        m1_row_offset = linha * qtd_colunas_m1;
+        r_row_offset  = linha * qtd_colunas_m2;
 
         // itera pela quantidade de colunas de m1 (linhas de m2)
         for (int j = 0; j < qtd_colunas_m1; j++)
         {
             // Pega m1[linha][j] e replica em todos os 8 lanes
-            __m256 m1_j = _mm256_set1_ps(m1_values[linha + j]);
+            __m256 m1_j = _mm256_set1_ps(m1_values[m1_row_offset + j]);
             // divide as linhas de m2 em 8 colunas para poder pegar o vetor
-            for (int k = 0; k < corte_linha_m2; k + 8)
+            for (int k = 0; k < corte_linha_m2; k++)
             {
-                __m256 m2_vec = _mm256_load_ps(&m2_values[(j * qtd_colunas_m2) + k]);
-                __m256 r_vec = _mm256_load_ps(&r_values[linha + k]);
+                __m256 m2_vec = _mm256_load_ps(&m2_values[(j * qtd_colunas_m2) + k * 8]);
+                __m256 r_vec = _mm256_load_ps(&r_values[r_row_offset + k * 8]);
 
                 r_vec = _mm256_fmadd_ps(m1_j, m2_vec, r_vec);
 
-                _mm256_store_ps(&r_values[linha + k], r_vec);
+                _mm256_store_ps(&r_values[r_row_offset + k * 8], r_vec);
             }
         }
     }
+
+    return NULL;
 }
 
 /*
@@ -91,26 +115,8 @@ void *matrix_worker(void *args)
 */
 int scalar_matrix_mult(float scalar_value, matrix *m, matrix *r)
 {
-    // sem alinhamento de memoria
-    /////////////////////////////////////////////
-    unsigned long int n = m->rows * m->cols;
-    unsigned long int i = 0;
+    matrix_zero_avx(r->values, r->rows, r->cols);
 
-    __m256 vscalar = _mm256_set1_ps(scalar_value);
-
-    // Processa 8 floats por vez (AVX)
-    for (; i + 8 <= n; i += 8)
-    {
-        __m256 v = _mm256_loadu_ps(&m->values[i]);
-        v = _mm256_mul_ps(v, vscalar);
-        _mm256_storeu_ps(&r->values[i], v); // conferir se a matriz r esta apta para receber os valores
-    }
-    // Trata os elementos restantes (resto da divisão por 8)
-    for (; i < n; i++)
-    {
-        r->values[i] = m->values[i] * scalar_value;
-    }
-    /////////////////////////////////////////////////
     // com alinhamento de memoria
     /////////////////////////////////////////////
     unsigned long int n = m->rows * m->cols;
@@ -162,6 +168,8 @@ int matrix_matrix_mult(matrix *m1, matrix *m2, matrix *r)
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
+    matrix_zero_avx(r->values, r->rows, r->cols);
+
     // Criar threads
     for (int i = 0; i < N_THREADS; i++)
     {
@@ -190,6 +198,8 @@ int matrix_matrix_mult(matrix *m1, matrix *m2, matrix *r)
             exit(2);
         }
     }
-
+    
     return 0;
 }
+
+
