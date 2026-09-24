@@ -22,11 +22,35 @@ void matrix_zero_avx(float *values, unsigned long int rows, unsigned long int co
     }
 }
 
-/*
-    Ainda falta tratar os possiveis erros.
-*/
+/**
+ * @param scalar_value valor escalar que multiplicará a matriz m
+ * @param m matriz de entrada
+ * @param r matriz resultado (deve ter as mesmas dimensões de m)
+ * @returns código de erro
+ *
+ * Calcula R = escalar * M
+ *
+ * Códigos de erro:
+ *
+ * 0 - sucesso
+ *
+ * 1 - ponteiro nulo (m, r ou seus values)
+ *
+ * 2 - dimensões incompatíveis entre m e r
+ *
+ */
 int scalar_matrix_mult(float scalar_value, matrix *m, matrix *r)
 {
+    // Verifica ponteiros nulos
+    if (!m || !r || !m->values || !r->values) {
+        return 1;
+    }
+
+    // Verifica se r tem as mesmas dimensões de m
+    if (m->rows != r->rows || m->cols != r->cols) {
+        return 2;
+    }
+
     matrix_zero_avx(r->values, r->rows, r->cols);
 
     // com alinhamento de memoria
@@ -41,7 +65,7 @@ int scalar_matrix_mult(float scalar_value, matrix *m, matrix *r)
     {
         __m256 v = _mm256_load_ps(&m->values[i]);
         v = _mm256_mul_ps(v, vscalar);
-        _mm256_store_ps(&r->values[i], v); 
+        _mm256_store_ps(&r->values[i], v);
     }
 
     return 0;
@@ -57,18 +81,32 @@ int scalar_matrix_mult(float scalar_value, matrix *m, matrix *r)
  *
  * Códigos de erro:
  *
- * - 1 - Erro ao criar thread
+ * 0 - sucesso
  *
- * - 2 - Erro ao esperar por thread
+ * 1 - ponteiro nulo (m1, m2, r ou seus values)
+ *
+ * 2 - dimensões incompatíveis: número de colunas de M1 diferente do número de linhas de M2
+ *
+ * 3 - matriz resultado com dimensões erradas (r->rows != m1->rows ou r->cols != m2->cols)
  *
  */
 int matrix_matrix_mult(matrix *m1, matrix *m2, matrix *r)
 {
-    // Verifica se a multiplicação é possível: colunas de M1 deve ser igual a linhas de M2
-    if (m1->cols != m2->rows) {
+    // Verifica ponteiros nulos
+    if (!m1 || !m2 || !r || !m1->values || !m2->values || !r->values) {
         return 1;
     }
-    
+
+    // Verifica se a multiplicação é possível: colunas de M1 deve ser igual a linhas de M2
+    if (m1->cols != m2->rows) {
+        return 2;
+    }
+
+    // Verifica se a matriz resultado tem o tamanho certo
+    if (r->rows != m1->rows || r->cols != m2->cols) {
+        return 3;
+    }
+
     int qtd_colunas_m1 = m1->cols;
     int qtd_colunas_m2 = m2->cols;
     int corte_linha_m2 = qtd_colunas_m2 / 8;
@@ -80,7 +118,6 @@ int matrix_matrix_mult(matrix *m1, matrix *m2, matrix *r)
     float *r_values = r->values;
 
     matrix_zero_avx(r_values, r->rows, r->cols); // zera antes de acumular com FMA
-    
     // itera pela quantidade de linhas de m1
     for (int i = 0; i < qtd_linhas; i++)
     {
@@ -105,8 +142,5 @@ int matrix_matrix_mult(matrix *m1, matrix *m2, matrix *r)
             }
         }
     }
-    
     return 0;
 }
-
-
